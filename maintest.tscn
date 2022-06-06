@@ -10,8 +10,8 @@ _data = {
 
 [sub_resource type="Shader" id=2]
 code = "shader_type spatial;
-render_mode cull_disabled;
-render_mode unshaded;
+//render_mode cull_disabled;
+//render_mode unshaded;
 
 float sdCappedCylinder(vec3 p, vec3 a, vec3 b, float r) {
 	vec3  ba = b - a;
@@ -29,7 +29,7 @@ return sign(d)*sqrt(abs(d))/baba;
 uniform float line_width = 0.7;
 float scene(vec3 p) {
 	float m = 1e20;
-	m = min( sdCappedCylinder(p.zyx,vec3(0.0),vec3(-1.0,0.0,0.0),0.1), m );
+	m = min( sdCappedCylinder(p.zyx,vec3(0.0),vec3(3.0,0.0,0.0),0.2), m );
 	
 	return m;
 }
@@ -47,34 +47,43 @@ varying vec3 cam_pos;
 varying vec3 ray_dir;
 varying mat3 norm_mat;
 void vertex() {
-	vec3 uvw = vec3(UV,0.0);
+	vec3 uvw = vec3(UV,0.0) * line_width;
 	
 	mat4 obj_mat = inverse(WORLD_MATRIX);
 	
-	mat3 yes = mat3(vec3(0.0),vec3(0.0),vec3(0.0));
+	// construct local matrix which looks toward next point (\"NORMAL\" is this direction)
+	mat3 yes = mat3(
+		vec3(1.0,0.0,0.0),
+		vec3(0.0,1.0,0.0),
+		NORMAL);
 	
-	yes[2] = NORMAL;
-	yes[1] = WORLD_MATRIX[1].xyz;
-//	yes[1] = CAMERA_MATRIX[1].xyz;
 	yes[0] = normalize(cross(yes[2],yes[1]));
-	yes[1] = normalize(cross(yes[0],yes[2]));
+	yes[1] = normalize(cross(yes[0],yes[2])); // this seems to not require a normalization
 	
-//	yes = yes * mat3(WORLD_MATRIX);
-	VERTEX += (yes * uvw) * line_width;
-	
+	vec3 init_vert = VERTEX;
+	VERTEX += yes * uvw;
 	uvw.z = ((UV2.x*2.0)-1.0);
-//	uvw.z = -UV2.x;
 	
-	cam_pos =  (obj_mat * vec4(CAMERA_MATRIX[3].xyz,1.0)).xyz;
-	norm_mat = mat3(MODELVIEW_MATRIX);
+	highp vec3 p1 = TANGENT;
+	p1 *= max(COLOR.x * 10.0, max(COLOR.y * 2.5, max(COLOR.z,(COLOR.a * 10.0) - 3.0)));
 	
-	ray_dir = (VERTEX - cam_pos);
+	mat4 to_obj = inverse(WORLD_MATRIX);
+	vec3 my_pos = (VERTEX - p1) * yes;
+	cam_pos = (((to_obj * CAMERA_MATRIX[3]).xyz) - p1) * yes;
+	ray_dir = cam_pos - my_pos;
+	
+	float inv_lw = 1.0/line_width;
+	ray_dir *= inv_lw;
+	cam_pos *= inv_lw;
+//	cam_pos = mat3(MODELVIEW_MATRIX) * -(init_vert);
+//	cam_pos = (MODELVIEW_MATRIX * vec4(uvw,1.0)).xyz;
+	norm_mat = mat3(MODELVIEW_MATRIX) * yes;
 }
 
 float raymarch(vec3 ro, vec3 rd) {
 	float total_dist = 0.0;
 	
-	for (int i = 0; i < 100; i++) {
+	for (int i = 0; i < 180; i++) {
 		vec3 ray = ro + (rd * total_dist);
 		float dist = scene(ray);
 		
@@ -90,7 +99,9 @@ float raymarch(vec3 ro, vec3 rd) {
 
 void fragment() {
 	vec3 ro = cam_pos;
-	vec3 rd = normalize(ray_dir);
+	vec3 rd = -normalize(ray_dir);
+	
+	
 	float yes = raymarch(ro, rd);
 	
 //	if (yes < 0.0) { discard; }
@@ -101,20 +112,25 @@ void fragment() {
 	NORMAL = norm_mat * normal;
 	METALLIC = 1.0;
 	ROUGHNESS = 0.04;
-	ALBEDO = vec3(UV,0.0);
+//	ALBEDO = vec3(UV,0.0);
+	vec3 n0 = dFdx(VERTEX);
+	vec3 n1 = dFdy(VERTEX);
+	
+	vec3 norm = normalize((VERTEX - n0) - (VERTEX - n1));
+//	ALBEDO = vec3( NORMAL );
 }"
 
 [sub_resource type="ShaderMaterial" id=3]
 shader = SubResource( 2 )
-shader_param/line_width = 2.0
+shader_param/line_width = 0.743
 
 [sub_resource type="ArrayMesh" id=8]
 surfaces/0 = {
-"aabb": AABB( 0, 0, 0, 2, 8, 2 ),
-"array_data": PoolByteArray( 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85, 21, 84, 85, 0, 184, 158, 180, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85, 21, 84, 85, 0, 56, 158, 180, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85, 21, 84, 85, 0, 0, 158, 56, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 0, 65, 0, 0, 0, 64, 85, 21, 84, 85, 0, 184, 158, 180, 0, 60, 0, 0, 0, 0, 0, 64, 0, 0, 0, 65, 0, 0, 0, 64, 85, 21, 84, 85, 0, 56, 158, 180, 0, 60, 0, 0, 0, 0, 0, 64, 0, 0, 0, 65, 0, 0, 0, 64, 85, 21, 84, 85, 0, 0, 158, 56, 0, 60, 0, 0 ),
+"aabb": AABB( 0, 2.225, 0, 6.48201, 1.925, 3.41101 ),
+"array_data": PoolByteArray( 139, 108, 207, 64, 102, 102, 14, 64, 211, 77, 90, 64, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 184, 158, 180, 0, 0, 0, 0, 139, 108, 207, 64, 102, 102, 14, 64, 211, 77, 90, 64, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 56, 158, 180, 0, 0, 0, 0, 139, 108, 207, 64, 102, 102, 14, 64, 211, 77, 90, 64, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 0, 158, 56, 0, 0, 0, 0, 0, 0, 0, 0, 205, 204, 132, 64, 0, 0, 0, 0, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 184, 158, 180, 0, 60, 0, 0, 0, 0, 0, 0, 205, 204, 132, 64, 0, 0, 0, 0, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 56, 158, 180, 0, 60, 0, 0, 0, 0, 0, 0, 205, 204, 132, 64, 0, 0, 0, 0, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 0, 158, 56, 0, 60, 0, 0 ),
 "array_index_data": PoolByteArray( 2, 0, 1, 0, 0, 0, 1, 0, 3, 0, 0, 0, 1, 0, 4, 0, 3, 0, 2, 0, 4, 0, 1, 0, 2, 0, 5, 0, 4, 0, 3, 0, 5, 0, 2, 0, 3, 0, 6, 0, 5, 0, 3, 0, 4, 0, 5, 0 ),
 "blend_shape_data": [  ],
-"format": 2194739,
+"format": 2192703,
 "index_count": 24,
 "primitive": 4,
 "skeleton_aabb": [  ],
@@ -130,19 +146,19 @@ albedo_color = Color( 0, 0, 0, 1 )
 
 [node name="Spatial" type="Spatial"]
 script = ExtResource( 1 )
-ex_points = PoolVector3Array( 0, 0, 0, 2, 8, 2 )
+ex_points = PoolVector3Array( 6.482, 2.225, 3.411, 0, 4.15, 0 )
 
 [node name="Path" type="Path" parent="."]
 curve = SubResource( 1 )
 
 [node name="MeshInstance" type="MeshInstance" parent="."]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0, 0 )
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.221045, 0 )
 material_override = SubResource( 3 )
 mesh = SubResource( 8 )
 material/0 = null
 
 [node name="MeshInstance2" type="MeshInstance" parent="."]
-transform = Transform( 4, 0, 0, 0, 4, 0, 0, 0, 4, 0, 0, 0 )
+transform = Transform( 4, 0, 0, 0, 4, 0, 0, 0, 4, -1.46297, 0.152933, 0.141313 )
 material_override = SubResource( 7 )
 mesh = SubResource( 5 )
 material/0 = null
