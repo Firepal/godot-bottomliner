@@ -8,10 +8,69 @@ _data = {
 "tilts": PoolRealArray(  )
 }
 
-[sub_resource type="Shader" id=2]
+[sub_resource type="Shader" id=8]
 code = "shader_type spatial;
-//render_mode cull_disabled;
+//render_mode cull_front;
+render_mode cull_disabled;
 //render_mode unshaded;
+
+uniform float line_width = 0.7;
+uniform float margin = 0.0;
+uniform bool clip = false;
+
+vec3 bm_process(vec3 vertex) {
+	return vertex;
+}
+
+varying vec3 cam_pos;
+varying vec3 ray_dir;
+varying mat3 norm_mat;
+varying float lebn;
+void vertex() {
+	vec3 uvw = vec3(UV,0.0) * line_width;
+	float lw = line_width  * (1.0+margin);
+	
+	// construct local matrix which looks toward next point (\"NORMAL\" is this direction)
+	mat3 yes = mat3(
+		vec3(1.0,0.0,0.0),
+		mix(
+			vec3(0.0,1.0,0.0),
+			CAMERA_MATRIX[1].xyz,
+			0.
+		),
+		NORMAL);
+	
+	yes[0] = normalize(cross(yes[2],yes[1]));
+	yes[1] = normalize(cross(yes[0],yes[2])); // this seems to not require a normalization
+	
+	vec3 init_vert = VERTEX;
+	VERTEX += yes * uvw;
+	
+	lebn = max(COLOR.x * 10.0, max(COLOR.y * 2.5, COLOR.z));
+	vec3 p1 = vec3(0.0);
+	
+	lebn = (1.0/UV2.y)/lw;
+//	lebn = COLOR.y * 2.5;
+	
+	mat3 sey = transpose(yes);
+	mat4 to_tube = mat4(
+		vec4(sey[0],1.0),
+		vec4(sey[1],1.0),
+		vec4(sey[2],1.0),
+		vec4(vec3(0.0),1.0)
+	);
+	
+	mat4 to_obj = inverse(WORLD_MATRIX);
+	vec3 my_pos = (VERTEX - p1) * yes;
+	my_pos = (to_tube * vec4(VERTEX,1.0)).xyz;
+	cam_pos = (to_tube * to_obj * vec4(CAMERA_MATRIX[3].xyz,1.0)).xyz;
+	ray_dir = cam_pos - my_pos;
+	
+	ray_dir /= lw;
+	cam_pos /= lw;
+	
+	norm_mat = mat3(MODELVIEW_MATRIX) * yes;
+}
 
 float sdCappedCylinder(vec3 p, vec3 a, vec3 b, float r) {
 	vec3  ba = b - a;
@@ -26,58 +85,22 @@ float sdCappedCylinder(vec3 p, vec3 a, vec3 b, float r) {
 return sign(d)*sqrt(abs(d))/baba;
 }
 
-uniform float line_width = 0.7;
 float scene(vec3 p) {
 	float m = 1e20;
-	m = min( sdCappedCylinder(p.zyx,vec3(0.0),vec3(3.0,0.0,0.0),0.2), m );
+	float sh = sin(p.z*4.5)*0.1;
+	float cy1 = sdCappedCylinder(p.zyx,vec3(0.0),vec3(lebn,0.0,0.0),1.0);
+	m = min( cy1, m );
 	
 	return m;
 }
 
-vec3 calcNormal( vec3 p ) {
+vec3 calcGrad( vec3 p ) {
 	const float h = 0.0001; // replace by an appropriate value
 	const vec2 k = vec2(1,-1);
-	return normalize( k.xyy*scene( p + k.xyy*h ) + 
+	return ( k.xyy*scene( p + k.xyy*h ) + 
 					k.yyx*scene( p + k.yyx*h ) + 
 					k.yxy*scene( p + k.yxy*h ) + 
 					k.xxx*scene( p + k.xxx*h ) );
-}
-
-varying vec3 cam_pos;
-varying vec3 ray_dir;
-varying mat3 norm_mat;
-void vertex() {
-	vec3 uvw = vec3(UV,0.0) * line_width;
-	
-	mat4 obj_mat = inverse(WORLD_MATRIX);
-	
-	// construct local matrix which looks toward next point (\"NORMAL\" is this direction)
-	mat3 yes = mat3(
-		vec3(1.0,0.0,0.0),
-		vec3(0.0,1.0,0.0),
-		NORMAL);
-	
-	yes[0] = normalize(cross(yes[2],yes[1]));
-	yes[1] = normalize(cross(yes[0],yes[2])); // this seems to not require a normalization
-	
-	vec3 init_vert = VERTEX;
-	VERTEX += yes * uvw;
-	uvw.z = ((UV2.x*2.0)-1.0);
-	
-	highp vec3 p1 = TANGENT;
-	p1 *= max(COLOR.x * 10.0, max(COLOR.y * 2.5, max(COLOR.z,(COLOR.a * 10.0) - 3.0)));
-	
-	mat4 to_obj = inverse(WORLD_MATRIX);
-	vec3 my_pos = (VERTEX - p1) * yes;
-	cam_pos = (((to_obj * CAMERA_MATRIX[3]).xyz) - p1) * yes;
-	ray_dir = cam_pos - my_pos;
-	
-	float inv_lw = 1.0/line_width;
-	ray_dir *= inv_lw;
-	cam_pos *= inv_lw;
-//	cam_pos = mat3(MODELVIEW_MATRIX) * -(init_vert);
-//	cam_pos = (MODELVIEW_MATRIX * vec4(uvw,1.0)).xyz;
-	norm_mat = mat3(MODELVIEW_MATRIX) * yes;
 }
 
 float raymarch(vec3 ro, vec3 rd) {
@@ -87,7 +110,7 @@ float raymarch(vec3 ro, vec3 rd) {
 		vec3 ray = ro + (rd * total_dist);
 		float dist = scene(ray);
 		
-		if (dist < 0.001) {
+		if (dist < 0.0001) {
 			return total_dist;
 		}
 		
@@ -104,34 +127,36 @@ void fragment() {
 	
 	float yes = raymarch(ro, rd);
 	
-//	if (yes < 0.0) { discard; }
+	if (yes < 0.0 && clip) { discard; }
 	
 	vec3 ray_hit = ro + (rd * yes);
-	vec3 normal = calcNormal(ray_hit);
+	NORMAL = normalize(norm_mat * calcGrad(ray_hit));
 	
-	NORMAL = norm_mat * normal;
 	METALLIC = 1.0;
 	ROUGHNESS = 0.04;
 //	ALBEDO = vec3(UV,0.0);
 	vec3 n0 = dFdx(VERTEX);
 	vec3 n1 = dFdy(VERTEX);
 	
-	vec3 norm = normalize((VERTEX - n0) - (VERTEX - n1));
-//	ALBEDO = vec3( NORMAL );
+	vec3 norm = normalize(((VERTEX - n0) - (VERTEX - n1)));
+//	ALBEDO = vec3( (ray_dir) );
+//	ALBEDO = vec3( norm );
 }"
 
 [sub_resource type="ShaderMaterial" id=3]
-shader = SubResource( 2 )
-shader_param/line_width = 0.743
+shader = SubResource( 8 )
+shader_param/line_width = 0.466
+shader_param/margin = -0.712
+shader_param/clip = true
 
-[sub_resource type="ArrayMesh" id=8]
+[sub_resource type="ArrayMesh" id=9]
 surfaces/0 = {
-"aabb": AABB( 0, 2.225, 0, 6.48201, 1.925, 3.41101 ),
-"array_data": PoolByteArray( 139, 108, 207, 64, 102, 102, 14, 64, 211, 77, 90, 64, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 184, 158, 180, 0, 0, 0, 0, 139, 108, 207, 64, 102, 102, 14, 64, 211, 77, 90, 64, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 56, 158, 180, 0, 0, 0, 0, 139, 108, 207, 64, 102, 102, 14, 64, 211, 77, 90, 64, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 0, 158, 56, 0, 0, 0, 0, 0, 0, 0, 0, 205, 204, 132, 64, 0, 0, 0, 0, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 184, 158, 180, 0, 60, 0, 0, 0, 0, 0, 0, 205, 204, 132, 64, 0, 0, 0, 0, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 56, 158, 180, 0, 60, 0, 0, 0, 0, 0, 0, 205, 204, 132, 64, 0, 0, 0, 0, 219, 148, 202, 57, 119, 68, 191, 75, 195, 255, 255, 118, 0, 0, 158, 56, 0, 60, 0, 0 ),
-"array_index_data": PoolByteArray( 2, 0, 1, 0, 0, 0, 1, 0, 3, 0, 0, 0, 1, 0, 4, 0, 3, 0, 2, 0, 4, 0, 1, 0, 2, 0, 5, 0, 4, 0, 3, 0, 5, 0, 2, 0, 3, 0, 6, 0, 5, 0, 3, 0, 4, 0, 5, 0 ),
+"aabb": AABB( 0, 0, -2.57, 1e-05, 1e-05, 2.57001 ),
+"array_data": PoolByteArray( 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 127, 255, 127, 0, 0, 255, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 184, 158, 180, 0, 0, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 127, 255, 127, 0, 0, 255, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 56, 158, 180, 0, 0, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 127, 255, 127, 0, 0, 255, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 158, 56, 0, 0, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 225, 122, 36, 192, 255, 127, 255, 127, 0, 0, 255, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 184, 158, 180, 0, 60, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 225, 122, 36, 192, 255, 127, 255, 127, 0, 0, 255, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 56, 158, 180, 0, 60, 57, 54, 0, 0, 0, 0, 0, 0, 0, 0, 225, 122, 36, 192, 255, 127, 255, 127, 0, 0, 255, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 158, 56, 0, 60, 57, 54 ),
+"array_index_data": PoolByteArray( 2, 0, 1, 0, 0, 0, 0, 0, 1, 0, 4, 0, 0, 0, 4, 0, 3, 0, 1, 0, 2, 0, 5, 0, 1, 0, 5, 0, 4, 0, 2, 0, 0, 0, 3, 0, 2, 0, 3, 0, 5, 0, 0, 0 ),
 "blend_shape_data": [  ],
-"format": 2192703,
-"index_count": 24,
+"format": 2188607,
+"index_count": 22,
 "primitive": 4,
 "skeleton_aabb": [  ],
 "vertex_count": 6
@@ -146,19 +171,18 @@ albedo_color = Color( 0, 0, 0, 1 )
 
 [node name="Spatial" type="Spatial"]
 script = ExtResource( 1 )
-ex_points = PoolVector3Array( 6.482, 2.225, 3.411, 0, 4.15, 0 )
+ex_points = PoolVector3Array( 0, 0, 0, 0, 0, -2.57 )
 
 [node name="Path" type="Path" parent="."]
 curve = SubResource( 1 )
 
 [node name="MeshInstance" type="MeshInstance" parent="."]
-transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.221045, 0 )
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -1.05114, 0, 0 )
 material_override = SubResource( 3 )
-mesh = SubResource( 8 )
-material/0 = null
+mesh = SubResource( 9 )
 
-[node name="MeshInstance2" type="MeshInstance" parent="."]
-transform = Transform( 4, 0, 0, 0, 4, 0, 0, 0, 4, -1.46297, 0.152933, 0.141313 )
+[node name="cube" type="MeshInstance" parent="."]
+transform = Transform( 4, 0, 0, 0, 4, 0, 0, 0, 4, -0.0148486, -0.00369483, 0.109104 )
+visible = false
 material_override = SubResource( 7 )
 mesh = SubResource( 5 )
-material/0 = null

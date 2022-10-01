@@ -12,6 +12,7 @@ config_version=4
 
 config/name="Bottomliner"
 config/description="The final say in line rendering"
+run/main_scene="res://maintest.tscn"
 config/icon="res://icon.png"
 
 [physics]
